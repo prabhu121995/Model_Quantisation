@@ -1,32 +1,10 @@
+"""Shortcut for:  uv run model-quantization quantize  (Qwen3.5-4B, INT8).
+
+Pass extra options through, e.g.:  uv run scripts/quantize_qwen.py --model Qwen/Qwen3.5-0.8B
 """
-quantize_qwen.py
-----------------
-Step 1: Download the Qwen2.5-0.5B model.
-Step 2: Quantise it (make the numbers smaller -> int8).
-Step 3: Save the smaller model into a local folder.
+import sys
 
-Run it:  python quantize_qwen.py
-"""
+from model_quantization.cli import main
 
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from optimum.quanto import QuantizedModelForCausalLM, qint8
-
-# The model we want and the folder where we will save the small version.
-MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"
-SAVE_FOLDER = "./qwen-int8"
-
-# --- Step 1: download the original (big) model + its tokenizer ---
-print("Downloading the model... (this can take a few minutes the first time)")
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-model = AutoModelForCausalLM.from_pretrained(MODEL_NAME)
-
-# --- Step 2: quantise the model to int8 (8-bit numbers instead of 32-bit) ---
-print("Quantising the model to int8...")
-small_model = QuantizedModelForCausalLM.quantize(model, weights=qint8)
-
-# --- Step 3: save the small model and tokenizer into a local folder ---
-print("Saving the small model to:", SAVE_FOLDER)
-small_model.save_pretrained(SAVE_FOLDER)
-tokenizer.save_pretrained(SAVE_FOLDER)
-
-print("Done! Now run:  python run_quantized.py")
+sys.argv[1:1] = ["quantize"]
+main()

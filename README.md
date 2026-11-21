@@ -1,49 +1,101 @@
-# Model Quantisation — (Qwen2.5-0.5B, runs on CPU)
+# Model Quantisation — Qwen3.5-4B to INT8 on CPU
 
-A hands-on package for teaching **model quantisation** and running a quantised
-LLM **locally** for fast output. Built and tested on a **CPU-only Windows**
-machine (no NVIDIA GPU required).
+Quantise **Qwen3.5-4B** to **INT8** with optimum-quanto, run it locally, and serve it through a
+**FastAPI** endpoint. Built and tested on a CPU-only Windows machine.
 
-## Contents
+## Project layout
 
-| File | What it is |
-|------|------------|
-| `01_model_quantisation_guide.ipynb` | Step-by-step teaching notebook (theory + runnable demos) |
-| `quantize_qwen.py` | Downloads **Qwen2.5-0.5B-Instruct**, quantises it, saves locally |
-| `run_quantized.py` | Loads the saved quantised model and generates text (with tok/s) |
-| `requirements.txt` | Python dependencies |
+```
+src/model_quantization/      # the application code
+  config.py                  # default model and output paths
+  quantize.py                # download -> quantise to INT8 -> save
+  inference.py               # load a saved model + generate (reports tok/s)
+  api.py                     # FastAPI app (/health, /generate)
+  cli.py                     # `model-quantization quantize | run | serve`
+notebooks/                   # study material
+  01_model_quantisation_guide.ipynb
+tests/                       # pytest (fast by default; `-m slow` for the real-model test)
+benchmarks/
+  benchmark.py               # size / speed / answer for every model in models/
+scripts/
+  quantize_qwen.py           # shortcut for `model-quantization quantize`
+  run_quantized.py           # shortcut for `model-quantization run`
+models/                      # quantised models are saved here (git-ignored)
+```
+
+## Configuration (`.env`)
+
+Common settings live in `.env` in the project root (git-ignored). Copy the template once:
+
+```bash
+cp .env.example .env
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MODEL_NAME` | `Qwen/Qwen3.5-4B` | Hugging Face model to quantise |
+| `MODELS_DIR` | `models` | Where quantised models are saved |
+| `MODEL_DIR` | `models/qwen3.5-4b-int8` | Model loaded by `run` and `serve` |
+| `HOST` / `PORT` | `127.0.0.1` / `8000` | API server address (`0.0.0.0` = reachable from your network) |
+| `MAX_NEW_TOKENS` | `200` | Default answer length |
+
+Relative paths are resolved from the project root. Command-line options (e.g. `--model-dir`)
+and real environment variables override `.env`.
 
 ## Quick start
 
 ```bash
-# 1. Install dependencies
-pip install -r requirements.txt
+uv sync
 
-# 2. Quantise the model and store it locally (creates ./qwen-int8)
-python quantize_qwen.py
+# 1. Quantise Qwen/Qwen3.5-4B to INT8 -> models/qwen3.5-4b-int8
+uv run model-quantization quantize
+#    smaller model for testing: --model Qwen/Qwen3.5-0.8B
 
-# 3. Run the quantised model (prints the input question and the model's answer)
-python run_quantized.py
-#    To ask something else, just edit the `question = "..."` line in run_quantized.py
+# 2. Ask a question
+uv run model-quantization run "What is model quantisation?"
 
-# 4. Open the teaching notebook
-jupyter notebook 01_model_quantisation_guide.ipynb
+# 3. Serve with FastAPI  ->  http://127.0.0.1:8000/docs
+uv run model-quantization serve
 ```
 
-## Why these tools?
+Call the API:
 
-This machine is **CPU-only**, so GPU-only quantisers (bitsandbytes, GPTQ, AWQ)
-do **not** apply here. We use:
+```bash
+curl -X POST http://127.0.0.1:8000/generate \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "What is INT8 quantisation?", "max_new_tokens": 150}'
+```
 
-- **optimum-quanto** — pure-PyTorch INT8/INT4 quantisation that runs on CPU.
-  Easiest path from Python; used by the scripts and notebook.
-- **GGUF / llama.cpp** — the *fastest* CPU route; covered in the notebook's
-  bonus section (optional install).
+## Study & testing
 
-## What "quantisation" buys you
+```bash
+# study notebook: open notebooks/*.ipynb in VS Code and pick the .venv kernel
+uv run pytest                                   # fast tests (~30 s): config, API
+uv run pytest -m slow                           # real quantise -> reload -> generate on Qwen3.5-0.8B
+uv run python benchmarks/benchmark.py           # benchmark all models in models/
+```
 
-Storing weights in fewer bits → smaller model, less RAM, faster token
-generation, runs offline & privately. INT8 ≈ 4× smaller than FP32 with
-negligible quality loss; INT4 ≈ 8× smaller with a small, usually unnoticeable
-drop.
+## How it works
 
+- The model is loaded in bfloat16 (a 4B model needs ~8 GB RAM instead of ~16 GB in FP32).
+- Each decoder layer is converted to float32 and quantised to INT8 **one layer at a time**, so RAM
+  stays low. The finished model stores weights in int8 but **computes in float32**: most laptop CPUs
+  have no fast bfloat16 math (bf16 was ~3–4x slower in testing).
+- Embeddings and `lm_head` stay unquantised, since they affect quality the most.
+
+## Benchmark (Qwen3.5-0.8B, Intel i5-8265U, CPU only)
+
+| Setup | Size on disk | Speed |
+|---|---|---|
+| INT8, float32 compute (this project) | 1.43 GB | 0.49 tok/s |
+| INT8, bfloat16 compute | 0.96 GB | 0.11–0.16 tok/s |
+
+Short runs (4–20 tokens), so treat them as rough. On CPU, quanto INT8 mainly saves **memory**
+(it is what lets the 4B model fit in 16 GB RAM); it is not faster than the unquantised float32 model.
+For maximum CPU speed, see GGUF / llama.cpp in the notebook's bonus section.
+
+## Notes
+
+- Use the Hugging Face id `Qwen/Qwen3.5-4B`, **not** the Ollama tag `qwen3.5:4b`.
+- Models are saved with raw state-dict keys, because transformers v5 renames Qwen3.5 keys on
+  `save_pretrained` in a way optimum-quanto 0.2.x cannot reload (weights came back as zeros).

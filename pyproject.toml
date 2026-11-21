@@ -1,0 +1,39 @@
+[project]
+name = "model-quantization"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "prabhu121995", email = "prabhurb95@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "accelerate>=1.16.0",
+    "fastapi>=0.165.0",
+    "optimum-quanto>=0.2.7",
+    "python-dotenv>=1.2.4",
+    "sentencepiece>=0.2.3",
+    "torch>=2.15.0",
+    "transformers>=5.23.0",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[project.scripts]
+model-quantization = "model_quantization:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: downloads a real model and quantises it (run with `pytest -m slow`)"]
+addopts = "-m 'not slow'"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "ipykernel>=7.4.0",
+    "nbconvert>=7.17.2",
+    "pytest>=9.2.0",
+]
