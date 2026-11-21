@@ -9,6 +9,7 @@ _MARKERS = {
     "benchmark.py": "benchmark",
     "run_quantized.py": "run script",
     "quantize_qwen.py": "quantize script",
+    "streamlit_app.py": "streamlit app",
 }
 
 

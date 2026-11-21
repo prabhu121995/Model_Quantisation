@@ -16,9 +16,14 @@ src/model_quantization/      # the application code
   api.py                     # FastAPI app (/health, /generate)
   hub.py                     # upload to the Hugging Face Hub with a model card
   processes.py               # `status` / `stop` commands
-  cli.py                     # `model-quantization quantize | run | serve | upload | status | stop`
+  ollama_client.py           # calls the original Qwen3.5-4B running in Ollama (qwen3.5:4b)
+  request_log.py             # CSV log of every /ask call
+  cli.py                     # `model-quantization quantize | run | serve | ui | upload | status | stop`
+app/streamlit_app.py         # Streamlit UI for /ask + the CSV log
 notebooks/
   01_model_quantisation_guide.ipynb   # theory + NF4/double-quant + KV cache / prefill / decode
+  02_colab_t4_qlora.ipynb             # Colab T4: NF4-dq speed on GPU + QLoRA fine-tuning
+  03_colab_t4_vllm.ipynb              # Colab T4: vLLM (bitsandbytes 4-bit + LoRA), throughput at 1/8/32 requests
 tests/                       # pytest (fast by default; `-m slow` for the real-model test)
 benchmarks/benchmark.py      # disk size / RAM / load time / speed for every model in models/
 scripts/                     # quantize_qwen.py, run_quantized.py shortcuts
@@ -63,6 +68,32 @@ curl -X POST http://127.0.0.1:8000/generate \
 The response includes `ttft_seconds`, `prefill_tokens_per_second`, `decode_tokens_per_second`,
 `kv_cache_blocks` and `kv_cache_mb`. `GET /health` shows the KV block pool (total / used blocks).
 
+## Compare with the original model (Ollama) + Streamlit UI
+
+`POST /ask` sends one question to the original Qwen3.5-4B in Ollama (`ollama pull qwen3.5:4b`), to the
+NF4-dq model, or to both one after the other (`"model": "ollama" | "nf4-dq" | "both"`). Every answer is
+appended to `logs/requests.csv`: `start_time`, `end_time`, `duration_sec`, `duration_min`, `prompt`,
+`response`, token counts, tokens/s and `status`/`error`. `GET /logs` returns the rows as JSON and
+`GET /logs.csv` downloads the file.
+
+```bash
+uv run model-quantization serve        # terminal 1: API (Ollama must be running too)
+uv run model-quantization ui           # terminal 2: Streamlit on http://localhost:8501
+
+curl -X POST http://127.0.0.1:8000/ask -H "Content-Type: application/json" \
+  -d '{"prompt": "What is NF4?", "model": "both", "max_new_tokens": 100}'
+```
+
+![Streamlit app: ask the original (Ollama) and NF4-dq models, with the CSV request log below](docs/image.png)
+
+*Streamlit app: pick the model(s) in the sidebar and ask a question. Below the answer, the request log
+shows a per-model summary (calls, average seconds / minutes, tokens/s) and every logged row: start and end
+time, duration in seconds and minutes, prompt and response.*
+
+The two models never run at the same time, so they don't compete for the CPU and their timings stay
+comparable. Note: Ollama's `qwen3.5:4b` is itself a 4-bit GGUF (Q4_K_M) running on llama.cpp kernels, so
+the speed difference mostly comes from the runtime, not from the bit width.
+
 ## Configuration (`.env`)
 
 | Variable | Default | Meaning |
@@ -75,6 +106,9 @@ The response includes `ttft_seconds`, `prefill_tokens_per_second`, `decode_token
 | `KV_CACHE_TOKENS` | `4096` | KV pool capacity (prompt + answer); 4096 = 256 MB for the 4B model |
 | `TORCH_THREADS` | `0` | CPU threads (0 = PyTorch default) |
 | `HOST` / `PORT` | `127.0.0.1` / `8000` | API address (`0.0.0.0` = reachable from your network) |
+| `OLLAMA_URL` / `OLLAMA_MODEL` | `http://127.0.0.1:11434` / `qwen3.5:4b` | Original model used by `/ask` |
+| `OLLAMA_TIMEOUT` | `1800` | Seconds to wait for Ollama |
+| `LOG_CSV` | `logs/requests.csv` | CSV log of every `/ask` call |
 | `MAX_NEW_TOKENS` | `200` | Default answer length |
 | `HF_USERNAME` | `PrabhuAIML` | Hugging Face account for `upload` |
 

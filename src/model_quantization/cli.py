@@ -1,4 +1,4 @@
-"""Command line entry point:  uv run model-quantization {quantize,run,serve,upload,status,stop} ..."""
+"""Command line entry point:  uv run model-quantization {quantize,run,serve,ui,upload,status,stop} ..."""
 
 import argparse
 import os
@@ -32,6 +32,9 @@ def main() -> None:
     s.add_argument("--model-dir", type=Path, default=config.MODEL_DIR)
     s.add_argument("--host", default=config.HOST)
     s.add_argument("--port", type=int, default=config.PORT)
+
+    w = sub.add_parser("ui", help="Start the Streamlit app (needs `serve` running)")
+    w.add_argument("--port", type=int, default=8501)
 
     u = sub.add_parser("upload", help="Upload a quantised model to the Hugging Face Hub")
     u.add_argument("--model-dir", type=Path, default=config.MODEL_DIR)
@@ -79,6 +82,13 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None
         if not args.username:
             parser.error("set HF_USERNAME in .env or pass --username")
         upload(args.model_dir, args.username, private=args.private)
+
+    elif args.command == "ui":
+        import subprocess
+
+        app = config.PROJECT_ROOT / "app" / "streamlit_app.py"
+        raise SystemExit(subprocess.call([sys.executable, "-m", "streamlit", "run", str(app),
+                                          "--server.port", str(args.port)]))
 
     elif args.command == "serve":
         import uvicorn

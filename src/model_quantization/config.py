@@ -50,6 +50,14 @@ KV_CACHE = os.getenv("KV_CACHE", "paged")
 KV_BLOCK_SIZE = int(os.getenv("KV_BLOCK_SIZE", "16"))  # tokens per block
 KV_CACHE_TOKENS = int(os.getenv("KV_CACHE_TOKENS", "4096"))  # pool capacity (prompt + answer)
 
+# Original (not NF4) Qwen3.5-4B, served locally by Ollama - used by the /ask comparison endpoint
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3.5:4b")
+OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "1800"))  # seconds
+
+# Every /ask call is appended to this CSV (start/end time, duration, prompt, response)
+LOG_CSV = _path("LOG_CSV", "logs/requests.csv")
+
 # CPU threads for PyTorch (0 = PyTorch default, usually the number of physical cores)
 TORCH_THREADS = int(os.getenv("TORCH_THREADS", "0"))
 
