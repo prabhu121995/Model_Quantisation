@@ -1,4 +1,4 @@
-"""Shortcut for:  uv run model-quantization quantize  (Qwen3.5-4B, INT8).
+"""Shortcut for:  uv run model-quantization quantize  (Qwen3.5-4B, NF4 + double quantisation).
 
 Pass extra options through, e.g.:  uv run scripts/quantize_qwen.py --model Qwen/Qwen3.5-0.8B
 """

@@ -9,7 +9,7 @@ def test_default_model_is_a_valid_hf_repo_id():
 
 def test_default_output_dir():
     out = config.default_output_dir("Qwen/Qwen3.5-4B")
-    assert out == config.MODELS_DIR / "qwen3.5-4b-int8"
+    assert out == config.MODELS_DIR / "qwen3.5-4b-nf4-dq"
 
 
 def test_paths_are_absolute():

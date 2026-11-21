@@ -1,65 +1,70 @@
-"""Download a model, quantise its weights to INT8, and save it locally."""
+"""Download a model, quantise it to NF4 with double quantisation, and save it locally.
 
-import json
+NF4 (4-bit NormalFloat) stores each weight in 4 bits, with one scale factor per block of
+64 weights. Double quantisation also quantises those scale factors (FP32 -> 8-bit), which
+saves another ~0.37 bits per weight.
+"""
+
 from pathlib import Path
 
 import torch
-from optimum.quanto import freeze, qint8, quantization_map, quantize as quanto_quantize
-from safetensors.torch import save_file
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 
 def _folder_size_gb(folder: Path) -> float:
     return sum(f.stat().st_size for f in folder.rglob("*") if f.is_file()) / 1024**3
 
 
-def _quantize_int8(model) -> None:
-    """Quantise every decoder layer to INT8, one layer at a time.
-
-    Each layer is first converted to float32 so the model *computes* in float32:
-    most laptop CPUs have no fast bfloat16 math (bf16 was ~4x slower in testing).
-    Doing it layer by layer keeps peak RAM close to the bf16 size, because each
-    int8 layer (1 byte/weight) is smaller than the bf16 layer it replaces.
-    """
-    for layer in model.get_decoder().layers:
-        layer.to(torch.float32)
-        quanto_quantize(layer, weights=qint8)
-        freeze(layer)
-    # Embeddings, final norm and lm_head stay unquantised (they matter most for quality).
-    model.to(torch.float32)
-    model.config.dtype = torch.float32
+def nf4_dq_config() -> BitsAndBytesConfig:
+    # Most laptop CPUs have no fast bfloat16 math: float32 compute was ~5x faster in testing.
+    compute_dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+    return BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_use_double_quant=True,  # <- double quantisation
+        bnb_4bit_compute_dtype=compute_dtype,
+    )
 
 
-def _save(model, output_dir: Path) -> None:
-    """Save in the layout `QuantizedModelForCausalLM.from_pretrained` expects.
+def download(model_name: str) -> str:
+    """Download the model files (resumable), retrying if the connection drops or stalls."""
+    import time
 
-    transformers v5 `save_pretrained` renames some checkpoint keys (e.g. Qwen3.5's
-    `model.*` -> `model.language_model.*`), which optimum-quanto 0.2.x's loader does
-    not understand -> weights reload as zeros. So we write the raw state dict instead.
-    """
-    state_dict = model.state_dict()
-    if model.config.tie_word_embeddings:
-        state_dict.pop("lm_head.weight", None)  # re-tied on load
-    save_file({k: v.contiguous() for k, v in state_dict.items()}, output_dir / "model.safetensors")
-    (output_dir / "quanto_qmap.json").write_text(json.dumps(quantization_map(model), indent=2))
-    model.config.save_pretrained(output_dir)
-    model.generation_config.save_pretrained(output_dir)
+    from huggingface_hub import snapshot_download
+
+    from .config import DOWNLOAD_RETRIES
+
+    patterns = ["*.json", "*.safetensors", "*.jinja", "*.txt", "*.model"]
+    for attempt in range(1, DOWNLOAD_RETRIES + 1):
+        try:
+            return snapshot_download(model_name, allow_patterns=patterns)
+        except Exception as e:  # network errors / timeouts: partial files are kept and resumed
+            if attempt == DOWNLOAD_RETRIES:
+                raise
+            print(f"Download interrupted ({type(e).__name__}); retry {attempt}/{DOWNLOAD_RETRIES - 1} in 5 s ...")
+            time.sleep(5)
 
 
 def quantize(model_name: str, output_dir: Path) -> Path:
     output_dir = Path(output_dir)
-    print(f"Downloading + loading {model_name} (first run can take a while)...")
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    # Load in bfloat16: a 4B model needs ~8 GB RAM instead of ~16 GB in float32.
-    model = AutoModelForCausalLM.from_pretrained(model_name, dtype=torch.bfloat16)
+    print(f"Downloading {model_name} (first run can take a while; it resumes if interrupted)...")
+    local = download(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(local)
 
-    print("Quantising weights to INT8...")
-    _quantize_int8(model)
+    print("Quantising to NF4 + double quantisation...")
+    config = nf4_dq_config()
+    # bitsandbytes quantises while loading, layer by layer, so peak RAM stays low.
+    model = AutoModelForCausalLM.from_pretrained(
+        local,
+        quantization_config=config,
+        dtype=config.bnb_4bit_compute_dtype,
+        device_map="auto" if torch.cuda.is_available() else "cpu",
+    )
+    model.config.base_model = model_name  # recorded for the Hub model card
 
     print(f"Saving to {output_dir} ...")
-    model.config.base_model = model_name  # recorded for the Hub model card
     output_dir.mkdir(parents=True, exist_ok=True)
-    _save(model, output_dir)
+    model.save_pretrained(output_dir)
     tokenizer.save_pretrained(output_dir)
 
     print(f"Done. Size on disk: {_folder_size_gb(output_dir):.2f} GB")
